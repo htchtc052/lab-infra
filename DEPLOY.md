@@ -1,207 +1,125 @@
 # CuratedPhoto — развёртывание
 
-Проект состоит из трёх репозиториев. На сервере они лежат рядом, **имена каталогов
-важны** — на них ссылаются пути сборки в `docker-compose.yml`:
+Три репозитория лежат на сервере рядом. **Имена каталогов важны** — на них
+ссылаются пути сборки в `docker-compose.yml`:
 
 ```
-/srv/curated-photo/
+/srv/lab/
 ├── backend     ← cps-backend    (Laravel API)
 ├── frontend    ← cps-client     (Nuxt SSR)
 └── infra       ← lab-infra      (этот репозиторий)
 ```
 
-Postgres и Redis живут на хосте, а не в compose — они общие для всех проектов
-на этом VPS. Контейнеры ходят к ним через `host.docker.internal`.
+Всё остальное — traefik, postgres, redis и сервисы проекта — живёт в одном
+compose. На хосте нужен только docker.
 
 ---
 
-## 1. Хост — один раз на сервере
-
-### 1.1 Docker
+## 1. Хост
 
 ```bash
 curl -fsSL https://get.docker.com | sh
 ```
 
-### 1.2 Traefik
-
-Traefik ставится отдельно и обслуживает все проекты на сервере. Compose этого
-проекта рассчитывает на такой контракт:
-
-| что | значение |
-|---|---|
-| внешняя docker-сеть | `traefik` |
-| entrypoint для HTTPS | `websecure` |
-| резолвер сертификатов | `letsencrypt` |
-
-Если Traefik ещё не поднят, сеть создаётся так:
+Если репозитории приватные, серверу нужен доступ к GitHub. Проще всего добавить
+один ключ в аккаунт целиком (Settings → SSH keys):
 
 ```bash
-docker network create traefik
-```
-
-### 1.3 Postgres
-
-```bash
-sudo -u postgres psql -c "CREATE USER curated_photo WITH PASSWORD 'ПРИДУМАЙ_ПАРОЛЬ';"
-sudo -u postgres psql -c "CREATE DATABASE curated_photo OWNER curated_photo;"
-```
-
-Postgres должен принимать соединения из docker-сети. В `postgresql.conf`:
-
-```
-listen_addresses = 'localhost,172.17.0.1'
-```
-
-и в `pg_hba.conf` — строка для docker-подсети:
-
-```
-host    curated_photo    curated_photo    172.16.0.0/12    scram-sha-256
-```
-
-После правок: `sudo systemctl restart postgresql`.
-
-### 1.4 Redis
-
-В `/etc/redis/redis.conf`:
-
-```
-bind 127.0.0.1 172.17.0.1
-requirepass ПРИДУМАЙ_ПАРОЛЬ
-```
-
-После правок: `sudo systemctl restart redis-server`.
-
-### 1.5 Файрвол
-
-Пункты 1.3 и 1.4 открывают Postgres и Redis на интерфейс docker. Снаружи они
-торчать не должны:
-
-```bash
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-```
-
-Порты 5432 и 6379 не открываем — доступ к ним только из контейнеров.
-
-### 1.6 Deploy-ключ для приватных репозиториев
-
-```bash
-ssh-keygen -t ed25519 -C "vps-deploy" -f ~/.ssh/id_ed25519 -N ""
+ssh-keygen -t ed25519 -C "vps" -f ~/.ssh/id_ed25519 -N ""
 cat ~/.ssh/id_ed25519.pub
-```
-
-Публичный ключ добавить в **каждый** из трёх репозиториев: Settings → Deploy keys
-→ Add deploy key, доступ только на чтение. Один и тот же ключ переиспользовать
-нельзя — GitHub требует уникальный deploy key на репозиторий, поэтому либо
-сгенерируй три ключа с разными именами файлов и опиши их в `~/.ssh/config`, либо
-добавь один ключ в аккаунт целиком (Settings → SSH keys), что проще для соло-проекта.
-
-Проверка:
-
-```bash
 ssh -T git@github.com
 ```
 
----
-
 ## 2. Проект
-
-### 2.1 Клонирование
 
 Целевой каталог указывается явно — имена репозиториев и каталогов не совпадают:
 
 ```bash
-sudo mkdir -p /srv/curated-photo && sudo chown $USER /srv/curated-photo
-cd /srv/curated-photo
+mkdir -p /srv/lab && cd /srv/lab
 git clone git@github.com:htchtc052/cps-backend.git backend
 git clone git@github.com:htchtc052/cps-client.git  frontend
 git clone git@github.com:htchtc052/lab-infra.git   infra
 ```
 
-### 2.2 Окружение
-
 `.env` — единственный источник правды по боевым значениям, и живёт он **только
-на сервере**. В git лежит `.env.example` — он задаёт форму, то есть набор ключей.
+на сервере**. В git лежит `.env.example`, задающий набор ключей.
 
 ```bash
-cd /srv/curated-photo/infra
+cd /srv/lab/infra
 cp .env.example .env
 chmod 600 .env
+echo "base64:$(openssl rand -base64 32)"   # APP_KEY
 ```
 
-Сгенерировать `APP_KEY` и вписать его в `.env`:
+Заполнить: `ACME_EMAIL`, домены и производные от них `APP_URL`, `FRONTEND_URL`,
+`SESSION_DOMAIN`, `SANCTUM_STATEFUL_DOMAINS`, а также `DB_PASSWORD` и
+`REDIS_PASSWORD` — их придумываешь сам, контейнеры создадутся с ними при первом
+запуске.
+
+> `APP_KEY` продублируй в менеджер паролей. Остальное восстановимо: эти сервисы
+> твои, пароль всегда можно сменить.
+
+Домены `API_DOMAIN` и `APP_DOMAIN` должны A-записями указывать на IP сервера
+**до** первого запуска — иначе Let's Encrypt не выдаст сертификат.
 
 ```bash
-echo "base64:$(openssl rand -base64 32)"
-```
-
-Дальше заполнить руками: `API_DOMAIN`, `APP_DOMAIN` и производные от них
-`APP_URL`, `FRONTEND_URL`, `SESSION_DOMAIN`, `SANCTUM_STATEFUL_DOMAINS`, а также
-`DB_PASSWORD` и `REDIS_PASSWORD` из пунктов 1.3 и 1.4.
-
-> `APP_KEY` продублируй в свой менеджер паролей. Остальные значения
-> восстановимы — эти сервисы принадлежат тебе, пароль всегда можно сменить.
-
-### 2.3 Запуск
-
-```bash
-cd /srv/curated-photo/infra
 docker compose build
-docker compose run --rm app php artisan migrate --force
 docker compose up -d
-```
-
-Проверить:
-
-```bash
+docker compose exec cps-app php artisan migrate --force
 docker compose ps
-docker compose logs -f --tail=50
 ```
 
-### 2.4 Обновление
+## 3. Обновление
 
 ```bash
-cd /srv/curated-photo
+cd /srv/lab
 git -C backend pull --ff-only
 git -C frontend pull --ff-only
 git -C infra pull --ff-only
-cd infra
-docker compose build
-docker compose run --rm app php artisan migrate --force
-docker compose up -d
+cd infra && docker compose build && docker compose up -d
+docker compose exec cps-app php artisan migrate --force
 ```
 
-`docker compose up -d` пересоздаёт только изменившиеся контейнеры, так что
-команду можно повторять сколько угодно раз.
+`up -d` пересоздаёт только изменившиеся контейнеры — команду можно повторять.
 
-> Когда в `.env.example` появляется новый ключ, его нужно руками добавить в `.env`
-> на сервере — иначе контейнер поднимется без него.
+> Появился новый ключ в `.env.example` — добавь его в `.env` на сервере руками.
 
 ---
 
-## 3. Данные
+## 4. Пауза и восстановление
 
-Всё состояние проекта — это база и том с фотографиями. Код и `.env` к состоянию
-не относятся: код в git, `.env` пересоздаётся из `.env.example` за пару минут.
+Штатный способ — образ в панели Timeweb: он лежит отдельно от сервера и
+переживает его удаление.
 
-Снять копию:
+1. остановить стек, чтобы база попала в снимок в согласованном виде:
+   `cd /srv/lab/infra && docker compose stop`
+2. снять образ: панель → сервер → Образы;
+3. удалить сервер — почасовые списания прекращаются, остаётся ~4 ₽/ГБ в месяц
+   за хранение образа;
+4. вернуться: создать сервер из образа. Поднимется всё вместе с данными.
+
+> Образы удаляются через 7 дней после блокировки аккаунта за неуплату. Держи
+> на балансе небольшую сумму, иначе пауза превратится в потерю.
+
+## 5. Копия данных
+
+Нужна, только если образ недоступен или переезжаешь к другому провайдеру.
+Состояние проекта — это база и том с фотографиями.
 
 ```bash
-pg_dump -U curated_photo -h localhost curated_photo | gzip > ~/curated_photo.sql.gz
-docker run --rm -v curated-photo_photo_storage:/data -v ~:/backup alpine \
-  tar czf /backup/photo_storage.tar.gz -C /data .
+cd /srv/lab/infra
+docker compose exec -T postgres pg_dump -U curated_photo curated_photo | gzip > ~/db.sql.gz
+docker run --rm -v lab_cps_photos:/data -v ~:/backup alpine tar czf /backup/photos.tar.gz -C /data .
 ```
 
-Восстановить на новом сервере — после пункта 2.2 и до `migrate`:
+Восстановить на чистом сервере — после пункта 2, вместо `migrate`:
 
 ```bash
-gunzip -c ~/curated_photo.sql.gz | psql -U curated_photo -h localhost curated_photo
-docker volume create curated-photo_photo_storage
-docker run --rm -v curated-photo_photo_storage:/data -v ~:/backup alpine \
-  tar xzf /backup/photo_storage.tar.gz -C /data
+cd /srv/lab/infra
+docker compose up -d postgres
+gunzip -c ~/db.sql.gz | docker compose exec -T postgres psql -U curated_photo curated_photo
+docker run --rm -v lab_cps_photos:/data -v ~:/backup alpine tar xzf /backup/photos.tar.gz -C /data
+docker compose up -d
 ```
 
 Фотографии без базы бесполезны — это файлы без владельцев, альбомов и ссылок.
