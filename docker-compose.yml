@@ -1,0 +1,72 @@
+name: "curated-photo"
+
+services:
+  app:
+    build:
+      context: ../backend
+      dockerfile: .docker/prod/Dockerfile
+    image: curated-photo-app
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - photo_storage:/var/www/storage/app
+    networks:
+      - internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  nginx-api:
+    build:
+      context: ../backend
+      dockerfile: .docker/prod/nginx/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - app
+    networks:
+      - internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cps-api.rule=Host(`${API_DOMAIN}`)"
+      - "traefik.http.routers.cps-api.entrypoints=websecure"
+      - "traefik.http.routers.cps-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cps-api.loadbalancer.server.port=8000"
+
+  queue:
+    image: curated-photo-app
+    depends_on:
+      - app
+    restart: unless-stopped
+    env_file: .env
+    command: php artisan queue:work --queue=previews,viewers,cleanup --tries=3 --sleep=3
+    volumes:
+      - photo_storage:/var/www/storage/app
+    networks:
+      - internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  client:
+    build:
+      context: ../frontend
+      dockerfile: .docker/prod/Dockerfile
+      args:
+        NUXT_PUBLIC_API_BASE: https://${API_DOMAIN}
+    restart: unless-stopped
+    networks:
+      - internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cps-app.rule=Host(`${APP_DOMAIN}`)"
+      - "traefik.http.routers.cps-app.entrypoints=websecure"
+      - "traefik.http.routers.cps-app.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cps-app.loadbalancer.server.port=3000"
+
+networks:
+  internal:
+  traefik:
+    external: true
+
+volumes:
+  photo_storage:
