@@ -1,9 +1,5 @@
 name: "lab"
 
-# Зонтик для проектов на этом VPS. Общий слой — traefik, postgres, redis;
-# ниже идут сервисы проектов с префиксом в имени. Новый проект добавляется
-# сюда же и переиспользует общие сервисы по имени: DB_HOST=postgres.
-
 services:
   traefik:
     image: traefik:v3.6
@@ -11,7 +7,6 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=lab_edge
       - --entrypoints.web.address=:80
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
@@ -24,11 +19,8 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Только чтение: Traefik следит за метками контейнеров, но не управляет ими.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_acme:/letsencrypt
-    networks:
-      - edge
 
   postgres:
     image: postgres:18-alpine
@@ -40,13 +32,10 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      # Без этого migrate может стартовать раньше, чем база примет соединения.
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
       interval: 5s
       timeout: 3s
       retries: 10
-    networks:
-      - internal
 
   redis:
     image: redis:8-alpine
@@ -54,8 +43,6 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    networks:
-      - internal
 
   cps-app:
     build:
@@ -69,8 +56,6 @@ services:
         condition: service_healthy
     volumes:
       - cps_photos:/var/www/storage/app
-    networks:
-      - internal
 
   cps-nginx:
     build:
@@ -79,9 +64,6 @@ services:
     restart: unless-stopped
     depends_on:
       - cps-app
-    networks:
-      - internal
-      - edge
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cps-api.rule=Host(`${API_DOMAIN}`)"
@@ -90,7 +72,6 @@ services:
       - "traefik.http.services.cps-api.loadbalancer.server.port=8000"
 
   cps-queue:
-    # Тот же образ, что и cps-app: собирается один раз, запускается дважды.
     image: cps-app
     restart: unless-stopped
     env_file: .env
@@ -99,8 +80,6 @@ services:
     command: php artisan queue:work --queue=previews,viewers,cleanup --tries=3 --sleep=3
     volumes:
       - cps_photos:/var/www/storage/app
-    networks:
-      - internal
 
   cps-client:
     build:
@@ -109,19 +88,12 @@ services:
       args:
         NUXT_PUBLIC_API_BASE: https://${API_DOMAIN}
     restart: unless-stopped
-    networks:
-      - edge
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cps-app.rule=Host(`${APP_DOMAIN}`)"
       - "traefik.http.routers.cps-app.entrypoints=websecure"
       - "traefik.http.routers.cps-app.tls.certresolver=letsencrypt"
       - "traefik.http.services.cps-app.loadbalancer.server.port=3000"
-
-networks:
-  # edge — всё, что видит Traefik. internal — база и очереди, наружу не выходят.
-  edge:
-  internal:
 
 volumes:
   pg_data:

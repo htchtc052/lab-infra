@@ -14,23 +14,19 @@
 | файл | назначение |
 |---|---|
 | `docker-compose.yml` | общий слой (traefik, postgres, redis) и сервисы проекта `cps-*` |
-| `.env.example` | форма окружения — какие ключи обязаны быть заполнены |
-| [`DEPLOY.md`](DEPLOY.md) | развёртывание, обновление, пауза и копия данных |
+| `.env.example` | форма окружения |
+| [`DEPLOY.md`](DEPLOY.md) | запуск, обновление, копия данных |
 
 ## Схема
 
-Наружу торчит только Traefik: он терминирует TLS и разводит два домена — API и
-фронтенд. Postgres и Redis доступны лишь из внутренней сети. Оригиналы
-фотографий лежат в docker-томе, а не в образе.
+Наружу опубликованы только порты Traefik. У остальных сервисов `ports` нет —
+они достижимы лишь изнутри compose.
 
 ```
-          ┌─ edge ───────────────┐   ┌─ internal ──────────────┐
-:443 ── traefik ─┬─ cps-nginx ───────── cps-app ──┬── postgres
-                 │                     cps-queue ─┼── redis
-                 └─ cps-client                    └── том cps_photos
+:443 ── traefik ─┬─ cps-nginx ── cps-app ──┬── postgres
+                 │               cps-queue ─┼── redis
+                 └─ cps-client              └── том cps_photos
 ```
 
 Второй проект добавляется в этот же compose и переиспользует общие сервисы:
 `DB_HOST=postgres`, `REDIS_HOST=redis`.
-
-Запуск — см. [DEPLOY.md](DEPLOY.md).
