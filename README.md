@@ -15,7 +15,6 @@
 |---|---|
 | `docker-compose.yml` | общий слой (traefik, postgres, redis) и сервисы проекта `cps-*` |
 | `.env.example` | форма окружения |
-| [`DEPLOY.md`](DEPLOY.md) | запуск, обновление, копия данных |
 
 ## Схема
 
