@@ -15,6 +15,7 @@
 |---|---|
 | `docker-compose.yml` | общий слой (traefik, postgres, redis) и сервисы проекта `cps-*` |
 | `.env.example` | форма окружения |
+| [`OUTSIDE-THE-IMAGE.md`](OUTSIDE-THE-IMAGE.md) | что живёт вне снимка сервера и правится руками после смены IP |
 
 ## Схема
 
@@ -24,7 +25,8 @@
 ```
 :443 ── traefik ─┬─ cps-nginx ── cps-app ──┬── postgres
                  │               cps-queue ─┼── redis
-                 └─ cps-client              └── том cps_photos
+                 └─ cps-client              ├── postfix
+                                            └── том cps_photos
 ```
 
 Второй проект добавляется в этот же compose и переиспользует общие сервисы:
