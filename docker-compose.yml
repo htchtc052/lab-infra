@@ -64,6 +64,8 @@ services:
     restart: unless-stopped
     depends_on:
       - cps-app
+    volumes:
+      - cps_photos:/var/www/storage/app:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.cps-api.rule=Host(`${API_DOMAIN}`)"
