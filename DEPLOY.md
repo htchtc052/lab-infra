@@ -79,16 +79,8 @@ secrets in `htchtc052/lab-infra` before its first run:
 - `VPS_HOST` — `104.171.136.141`
 - `VPS_SSH_KEY` — the existing private key that can log in as `root`
 
-The VPS also needs one one-time GHCR login before the first deployment. Create a
-GitHub classic personal access token with only `read:packages`, then run:
-
-```bash
-ssh root@104.171.136.141
-docker login ghcr.io -u htchtc052
-```
-
-Paste the token only at Docker's password prompt. Docker stores it on the VPS;
-the token does not enter GitHub Actions or the repository.
+The current GHCR package can be pulled by the VPS without a registry login, so no
+package token belongs on the server or in GitHub Actions.
 
 A key added to `.env.example` doesn't propagate — add it to the server's `.env` by
 hand, or the container starts without it.
