@@ -23,7 +23,7 @@ Server layout:
 curl -fsSL https://get.docker.com | sh
 
 mkdir -p /srv/lab && cd /srv/lab
-git clone git@github.com:htchtc052/lab-infra.git infra
+git clone https://github.com/htchtc052/lab-infra.git infra
 
 cd infra
 cp .env.example .env && chmod 600 .env
@@ -41,13 +41,24 @@ need a real decision rather than a placeholder:
 
 `API_DOMAIN`/`APP_DOMAIN` must already resolve to this server before the first
 `up -d` — Let's Encrypt's HTTP challenge needs to reach the container.
+The public key matching the GitHub `VPS_SSH_KEY` secret must be installed for
+`root`, either while creating the VPS or in `/root/.ssh/authorized_keys`.
 
 ```bash
 docker compose pull
 docker compose up -d postgres redis
 docker compose run --rm cps-app php artisan migrate --force
+docker compose run --rm cps-app php artisan app:ensure-admin owner@example.com --name="Owner"
 docker compose up -d
+api_domain="$(sed -n 's/^API_DOMAIN=//p' .env | head -n 1)"
+app_domain="$(sed -n 's/^APP_DOMAIN=//p' .env | head -n 1)"
+curl --fail "https://${api_domain}/up"
+curl --fail "https://${app_domain}/" > /dev/null
 ```
+
+`app:ensure-admin` asks for a new password without echoing it. If the email
+already exists, the command only grants administrator access and leaves the
+existing password unchanged. It is safe to repeat.
 
 The VPS never builds the application. It downloads the ready `latest` images
 from GHCR; the database, uploaded photos and `.env` are created or restored on
@@ -70,14 +81,17 @@ every push to `main`. To update them on the VPS, manually run the `Deploy backen
 workflow in `lab-infra`. It pulls `cps-app:latest` and `cps-nginx:latest`, applies
 forward migrations with a temporary container, then recreates `cps-app`,
 `cps-nginx` and `cps-queue`. If a migration fails, the running backend containers
-are not replaced.
+are not replaced. Both deploy workflows finish with a retried public HTTP check
+and fail if the updated endpoint does not answer successfully.
 
 The same manual deploy can be started from an authenticated GitHub CLI:
 
 ```bash
 gh workflow run deploy-frontend.yml --repo htchtc052/lab-infra --ref main
 gh workflow run deploy-backend.yml  --repo htchtc052/lab-infra --ref main
-gh run watch --repo htchtc052/lab-infra
+gh run list --repo htchtc052/lab-infra --workflow deploy-frontend.yml --limit 1
+gh run list --repo htchtc052/lab-infra --workflow deploy-backend.yml --limit 1
+gh run watch <run-id> --repo htchtc052/lab-infra
 ```
 
 Run only the workflow for the component whose image you intend to put in
@@ -116,27 +130,72 @@ After either path, start a manual frontend and/or backend deploy to fetch the
 current images. If the old server was deleted without a snapshot or backups, its
 database, photos and `.env` cannot be reconstructed from GHCR.
 
-## `.env` has exactly one copy
+## Runtime secrets
 
-It lives only at `/srv/lab/infra/.env` (`chmod 600`, root-only) — not checked into
-git, not mirrored anywhere else. If it's gone, there's nothing to restore: rebuild
-it from `.env.example` with a fresh `APP_KEY` and fresh DB/Redis passwords. That
-invalidates existing sessions and requires the new DB password to match what
-Postgres actually has (or a fresh `migrate` on an empty database).
+The live file is `/srv/lab/infra/.env` (`chmod 600`, root-only) — it is not
+checked into git and not copied into GitHub Secrets. A portable backup includes a
+copy named `infra.env`; anyone who obtains that backup obtains all runtime
+secrets. Keep the downloaded bundle in encrypted storage. If both `.env` and
+every backup are gone, rebuild it from `.env.example` with fresh secrets and use
+a clean database.
 
-## Data backup / restore
+## Portable backup
+
+This is the provider-independent recovery path. It briefly stops the API and
+queue so the database and photo volume describe the same state, then restarts
+them. It stores Postgres, photos, DKIM, `.env`, checksums and the infra commit:
+
+```bash
+ssh root@<VPS_HOST> 'cd /srv/lab/infra && ./scripts/backup.sh'
+```
+
+The command prints `/srv/lab/backups/<UTC timestamp>`. The backup is not safe
+while it remains on the VPS being deleted. Download that exact directory:
+
+```bash
+scp -r root@<VPS_HOST>:/srv/lab/backups/<UTC timestamp> ./
+```
+
+Keep it in private encrypted storage. Redis is intentionally excluded; sessions,
+cache and pending queue state are disposable. ACME certificates are also omitted
+and are issued again from DNS.
+
+## Restore a portable backup
+
+Prepare a fresh server and clone `lab-infra` as above, but do not create `.env`
+and do not start Compose. Upload the backup directory, then run:
+
+```bash
+scp -r ./<UTC timestamp> root@<VPS_HOST>:/srv/lab/backups/
+ssh -t root@<VPS_HOST> \
+  'cd /srv/lab/infra && ./scripts/restore.sh /srv/lab/backups/<UTC timestamp>'
+```
+
+The restore script verifies checksums and refuses to touch a server where any
+target data volume already exists. It installs `.env`, restores Postgres, photos
+and DKIM, applies any newer forward migrations, pulls current images and starts
+the complete stack. Then update DNS and `VPS_HOST` if the address changed and run
+the two public `curl` checks from **Fresh server**.
+
+## Deliberately reset production data
+
+This is not deployment. Run it only after an explicit decision to discard the
+database, uploaded photos, Redis state and sessions. It deliberately preserves
+Traefik certificates and DKIM:
 
 ```bash
 cd /srv/lab/infra
-docker compose exec -T postgres pg_dump -U curated_photo curated_photo | gzip > ~/db.sql.gz
-docker run --rm -v lab_cps_photos:/data -v ~:/backup alpine tar czf /backup/photos.tar.gz -C /data .
-```
-
-Restore on a clean server — instead of `migrate --force`:
-
-```bash
-docker compose up -d postgres
-gunzip -c ~/db.sql.gz | docker compose exec -T postgres psql -U curated_photo curated_photo
-docker run --rm -v lab_cps_photos:/data -v ~:/backup alpine tar xzf /backup/photos.tar.gz -C /data
+./scripts/backup.sh                         # optional last recovery point
+docker compose down
+docker volume rm lab_pg_data lab_redis_data lab_cps_photos
+docker compose up -d --wait postgres redis
+docker compose run --rm cps-app php artisan migrate --force
+docker compose run --rm cps-app php artisan app:ensure-admin owner@example.com --name="Owner"
 docker compose up -d
 ```
+
+Never replace the named `docker volume rm` command with `docker compose down -v`:
+that would also delete ACME certificates and the mail DKIM key.
+
+The current operational trade-offs are recorded in
+[`DECISIONS.md`](DECISIONS.md).
