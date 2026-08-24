@@ -186,6 +186,7 @@ Traefik certificates and DKIM:
 ```bash
 cd /srv/lab/infra
 ./scripts/backup.sh                         # optional last recovery point
+docker compose pull
 docker compose down
 docker volume rm lab_pg_data lab_redis_data lab_cps_photos
 docker compose up -d --wait postgres redis
