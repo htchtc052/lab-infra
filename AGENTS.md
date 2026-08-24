@@ -4,8 +4,8 @@
 
 - `cps-client`, `cps-backend` and `lab-infra` are independent repositories and
   are committed and pushed independently.
-- `DEPLOY.md` is the operational source of truth. `DECISIONS.md` records the
-  deliberate trade-offs. `TIMEWEB.md` contains provider-specific recovery steps.
+- `DEPLOY.md` is the operational source of truth. `TIMEWEB.md` contains
+  provider-specific image, pause and recovery steps.
 - Production runs published GHCR images. Source checkouts of the frontend and
   backend do not belong on the VPS.
 

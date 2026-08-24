@@ -118,64 +118,27 @@ Yes: application images are replaceable and are always downloadable from GHCR.
 They are not a full server backup: they do not contain Postgres data, uploaded
 photos, Docker volumes or `.env`.
 
-- For a planned Timeweb pause, create a server snapshot and keep its public IP.
-  Restore a server from that snapshot and attach the same IP; DNS and `VPS_HOST`
-  do not need changing. See [`TIMEWEB.md`](TIMEWEB.md).
-- For a completely new server, use **Fresh server** above, restore the database
-  and photos if they are needed, then update DNS records and the `VPS_HOST`
-  GitHub secret. The SSH public key matching `VPS_SSH_KEY` must also be present
-  for the manual deploy workflows to work.
+- For a planned Timeweb pause, create or download a full server image and keep
+  its public IP if convenient. Restore a server from that image and attach the
+  same IP; DNS and `VPS_HOST` do not need changing. See
+  [`TIMEWEB.md`](TIMEWEB.md).
+- A native Timeweb backup can also be downloaded and later uploaded as an image;
+  this uses the hosting recovery mechanism rather than project scripts.
+- For a completely clean server, use **Fresh server** above. It creates an empty
+  database and a new administrator. Then update DNS records and `VPS_HOST` if the
+  server address changed.
 
-After either path, start a manual frontend and/or backend deploy to fetch the
-current images. If the old server was deleted without a snapshot or backups, its
-database, photos and `.env` cannot be reconstructed from GHCR.
+After restoring an image, start a manual frontend and/or backend deploy to fetch
+the current application images. **Fresh server** already pulls them. If the old
+server was deleted without an image or backup, its database, photos and `.env`
+cannot be reconstructed from GHCR.
 
 ## Runtime secrets
 
-The live file is `/srv/lab/infra/.env` (`chmod 600`, root-only) — it is not
-checked into git and not copied into GitHub Secrets. A portable backup includes a
-copy named `infra.env`; anyone who obtains that backup obtains all runtime
-secrets. Keep the downloaded bundle in encrypted storage. If both `.env` and
-every backup are gone, rebuild it from `.env.example` with fresh secrets and use
-a clean database.
-
-## Portable backup
-
-This is the provider-independent recovery path. It briefly stops the API and
-queue so the database and photo volume describe the same state, then restarts
-them. It stores Postgres, photos, DKIM, `.env`, checksums and the infra commit:
-
-```bash
-ssh root@<VPS_HOST> 'cd /srv/lab/infra && ./scripts/backup.sh'
-```
-
-The command prints `/srv/lab/backups/<UTC timestamp>`. The backup is not safe
-while it remains on the VPS being deleted. Download that exact directory:
-
-```bash
-scp -r root@<VPS_HOST>:/srv/lab/backups/<UTC timestamp> ./
-```
-
-Keep it in private encrypted storage. Redis is intentionally excluded; sessions,
-cache and pending queue state are disposable. ACME certificates are also omitted
-and are issued again from DNS.
-
-## Restore a portable backup
-
-Prepare a fresh server and clone `lab-infra` as above, but do not create `.env`
-and do not start Compose. Upload the backup directory, then run:
-
-```bash
-scp -r ./<UTC timestamp> root@<VPS_HOST>:/srv/lab/backups/
-ssh -t root@<VPS_HOST> \
-  'cd /srv/lab/infra && ./scripts/restore.sh /srv/lab/backups/<UTC timestamp>'
-```
-
-The restore script verifies checksums and refuses to touch a server where any
-target data volume already exists. It installs `.env`, restores Postgres, photos
-and DKIM, applies any newer forward migrations, pulls current images and starts
-the complete stack. Then update DNS and `VPS_HOST` if the address changed and run
-the two public `curl` checks from **Fresh server**.
+The live file is `/srv/lab/infra/.env` (`chmod 600`, root-only). It is not checked
+into git and not copied into GitHub Secrets. A full Timeweb image or backup
+contains this file together with the Docker volumes. A clean installation creates
+a new `.env`, `APP_KEY`, database password and Redis password.
 
 ## Deliberately reset production data
 
@@ -185,8 +148,7 @@ Traefik certificates and DKIM:
 
 ```bash
 cd /srv/lab/infra
-./scripts/backup.sh                         # optional last recovery point
-docker compose pull
+docker compose pull cps-app
 docker compose down
 docker volume rm lab_pg_data lab_redis_data lab_cps_photos
 docker compose up -d --wait postgres redis
@@ -195,8 +157,9 @@ docker compose run --rm cps-app php artisan app:ensure-admin owner@example.com -
 docker compose up -d
 ```
 
-Never replace the named `docker volume rm` command with `docker compose down -v`:
-that would also delete ACME certificates and the mail DKIM key.
+`docker compose pull cps-app` only refreshes the locally cached application
+image; it does not replace the running container. The following one-off
+`migrate` and `app:ensure-admin` commands must come from the current image.
 
-The current operational trade-offs are recorded in
-[`DECISIONS.md`](DECISIONS.md).
+The named volumes discard only the database, Redis and uploaded photos. Traefik
+certificates and the mail DKIM key remain in their separate volumes.
