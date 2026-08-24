@@ -1,6 +1,8 @@
 # Timeweb: пауза, возврат
 
 Деплой — в `DEPLOY.md`. Здесь только то, что специфично для этого хостинга.
+`<VPS_HOST>` ниже — текущий публичный адрес сервера, тот же, что хранится в
+GitHub Secret `VPS_HOST`; это не постоянный адрес проекта.
 
 ## Пауза — 240 ₽ вместо 1200 ₽
 
@@ -10,7 +12,7 @@
 **1. Остановить стек.** Иначе база попадёт в снимок посреди записи.
 
 ```bash
-ssh root@<IP> 'cd /srv/lab/infra && docker compose stop'
+ssh root@<VPS_HOST> 'cd /srv/lab/infra && docker compose stop'
 ```
 
 **2. Снять образ.** Сервер → Образы → создать. Диск занят около 10 ГБ, хранение
@@ -30,7 +32,7 @@ ssh root@<IP> 'cd /srv/lab/infra && docker compose stop'
 Создать сервер из образа (Образы → создать сервер), привязать **тот же** IP.
 
 ```bash
-ssh root@<IP> 'cd /srv/lab/infra && docker compose up -d'
+ssh root@<VPS_HOST> 'cd /srv/lab/infra && docker compose up -d'
 ```
 
 DNS менять не нужно — привязан к адресу, который сохранился.

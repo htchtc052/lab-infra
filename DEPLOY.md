@@ -1,34 +1,29 @@
 # Deploy
 
-## Where
+## Target server
 
-Timeweb VPS "Diligent Horologium", 2 vCPU / 3GB RAM / 30GB NVMe.
+Production is one replaceable Linux VPS. Its active public address is held in the
+`VPS_HOST` secret of `htchtc052/lab-infra`; it is deliberately not written here.
+The deploy workflows connect as `root` to that address.
 
-```
-ssh root@104.171.136.141
-```
-
-`photo.proclouds.ru`, `photo-api.proclouds.ru` and `mail.proclouds.ru` all resolve to
-that same IP — one server runs everything.
+`photo.proclouds.ru`, `photo-api.proclouds.ru` and `mail.proclouds.ru` must all
+resolve to the active server's address. Timeweb-specific pause and recovery steps
+are in [`TIMEWEB.md`](TIMEWEB.md).
 
 Server layout:
 
 ```
 /srv/lab/
-├── backend     ← cps-backend (kept for source work; not used by production Compose)
-├── frontend    ← cps-client (kept for source work; not used by production Compose)
-└── infra       ← lab-infra
+└── infra       ← lab-infra, Compose and the production `.env`
 ```
 
-## First run
+## Fresh server
 
 ```bash
 curl -fsSL https://get.docker.com | sh
 
 mkdir -p /srv/lab && cd /srv/lab
-git clone git@github.com:htchtc052/cps-backend.git backend
-git clone git@github.com:htchtc052/cps-client.git  frontend
-git clone git@github.com:htchtc052/lab-infra.git   infra
+git clone git@github.com:htchtc052/lab-infra.git infra
 
 cd infra
 cp .env.example .env && chmod 600 .env
@@ -54,12 +49,21 @@ docker compose run --rm cps-app php artisan migrate --force
 docker compose up -d
 ```
 
+The VPS never builds the application. It downloads the ready `latest` images
+from GHCR; the database, uploaded photos and `.env` are created or restored on
+this server separately.
+
 ## Update (the normal case)
 
-The frontend image is built and published by `cps-client` GitHub Actions on every
-push to `main`. To update it on the VPS, manually run the `Deploy frontend`
-workflow in `lab-infra` after the image build succeeds. The workflow pulls
-`ghcr.io/htchtc052/cps-client:latest` and recreates only `cps-client`.
+1. Commit and push to `main` locally. The corresponding `cps-client` or
+   `cps-backend` workflow automatically builds and publishes its `latest` image
+   to GHCR. Wait for that build to succeed.
+2. Deploy is a separate explicit action. In GitHub, open
+   `htchtc052/lab-infra` → **Actions** → **Deploy frontend** or **Deploy backend**
+   → **Run workflow** → `main` → **Run workflow**.
+
+The frontend deploy pulls `ghcr.io/htchtc052/cps-client:latest` and recreates
+only `cps-client`.
 
 The backend images are built and published by `cps-backend` GitHub Actions on
 every push to `main`. To update them on the VPS, manually run the `Deploy backend`
@@ -68,12 +72,24 @@ forward migrations with a temporary container, then recreates `cps-app`,
 `cps-nginx` and `cps-queue`. If a migration fails, the running backend containers
 are not replaced.
 
+The same manual deploy can be started from an authenticated GitHub CLI:
+
+```bash
+gh workflow run deploy-frontend.yml --repo htchtc052/lab-infra --ref main
+gh workflow run deploy-backend.yml  --repo htchtc052/lab-infra --ref main
+gh run watch --repo htchtc052/lab-infra
+```
+
+Run only the workflow for the component whose image you intend to put in
+production. A successful image build does not change the VPS by itself.
+
 ## GitHub Actions deploy setup
 
 The `Deploy frontend` and `Deploy backend` workflows run only by manual dispatch.
 They use these repository secrets in `htchtc052/lab-infra`:
 
-- `VPS_HOST` — `104.171.136.141`
+- `VPS_HOST` — active public IP or DNS name of the target VPS; update it after a
+  move to a new server
 - `VPS_SSH_KEY` — the existing private key that can log in as `root`
 
 The current GHCR package can be pulled by the VPS without a registry login, so no
@@ -81,6 +97,24 @@ package token belongs on the server or in GitHub Actions.
 
 A key added to `.env.example` doesn't propagate — add it to the server's `.env` by
 hand, or the container starts without it.
+
+## Move, delete or recreate a VPS
+
+Yes: application images are replaceable and are always downloadable from GHCR.
+They are not a full server backup: they do not contain Postgres data, uploaded
+photos, Docker volumes or `.env`.
+
+- For a planned Timeweb pause, create a server snapshot and keep its public IP.
+  Restore a server from that snapshot and attach the same IP; DNS and `VPS_HOST`
+  do not need changing. See [`TIMEWEB.md`](TIMEWEB.md).
+- For a completely new server, use **Fresh server** above, restore the database
+  and photos if they are needed, then update DNS records and the `VPS_HOST`
+  GitHub secret. The SSH public key matching `VPS_SSH_KEY` must also be present
+  for the manual deploy workflows to work.
+
+After either path, start a manual frontend and/or backend deploy to fetch the
+current images. If the old server was deleted without a snapshot or backups, its
+database, photos and `.env` cannot be reconstructed from GHCR.
 
 ## `.env` has exactly one copy
 
