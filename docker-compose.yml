@@ -55,10 +55,7 @@ services:
       - postfix_dkim:/etc/opendkim/keys
 
   cps-app:
-    build:
-      context: ../backend
-      dockerfile: .docker/prod/Dockerfile
-    image: cps-app
+    image: ghcr.io/htchtc052/cps-app:latest
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -68,9 +65,7 @@ services:
       - cps_photos:/var/www/storage/app
 
   cps-nginx:
-    build:
-      context: ../backend
-      dockerfile: .docker/prod/nginx/Dockerfile
+    image: ghcr.io/htchtc052/cps-nginx:latest
     restart: unless-stopped
     depends_on:
       - cps-app
@@ -84,7 +79,7 @@ services:
       - "traefik.http.services.cps-api.loadbalancer.server.port=8000"
 
   cps-queue:
-    image: cps-app
+    image: ghcr.io/htchtc052/cps-app:latest
     restart: unless-stopped
     env_file: .env
     depends_on:

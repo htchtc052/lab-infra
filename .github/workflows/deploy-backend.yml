@@ -1,0 +1,28 @@
+name: Deploy backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /srv/lab/infra
+            git pull --ff-only
+            docker compose pull cps-app cps-nginx
+            docker compose run --rm cps-app php artisan migrate --force
+            docker compose up -d cps-app cps-nginx cps-queue
+            docker compose ps cps-app cps-nginx cps-queue postgres redis

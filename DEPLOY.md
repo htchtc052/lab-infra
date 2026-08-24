@@ -15,7 +15,7 @@ Server layout:
 
 ```
 /srv/lab/
-├── backend     ← cps-backend
+├── backend     ← cps-backend (kept for source work; not used by production Compose)
 ├── frontend    ← cps-client (kept for source work; not used by production Compose)
 └── infra       ← lab-infra
 ```
@@ -48,9 +48,10 @@ need a real decision rather than a placeholder:
 `up -d` — Let's Encrypt's HTTP challenge needs to reach the container.
 
 ```bash
-docker compose build cps-app cps-nginx
+docker compose pull
+docker compose up -d postgres redis
+docker compose run --rm cps-app php artisan migrate --force
 docker compose up -d
-docker compose exec cps-app php artisan migrate --force
 ```
 
 ## Update (the normal case)
@@ -60,21 +61,17 @@ push to `main`. To update it on the VPS, manually run the `Deploy frontend`
 workflow in `lab-infra` after the image build succeeds. The workflow pulls
 `ghcr.io/htchtc052/cps-client:latest` and recreates only `cps-client`.
 
-Backend updates remain local builds until their own publishing workflow exists:
-
-```bash
-cd /srv/lab
-git -C backend pull --ff-only
-git -C infra pull --ff-only
-cd infra && docker compose build cps-app cps-nginx
-docker compose up -d cps-app cps-nginx cps-queue
-docker compose exec cps-app php artisan migrate --force
-```
+The backend images are built and published by `cps-backend` GitHub Actions on
+every push to `main`. To update them on the VPS, manually run the `Deploy backend`
+workflow in `lab-infra`. It pulls `cps-app:latest` and `cps-nginx:latest`, applies
+forward migrations with a temporary container, then recreates `cps-app`,
+`cps-nginx` and `cps-queue`. If a migration fails, the running backend containers
+are not replaced.
 
 ## GitHub Actions deploy setup
 
-The `Deploy frontend` workflow runs only by manual dispatch. Add these repository
-secrets in `htchtc052/lab-infra` before its first run:
+The `Deploy frontend` and `Deploy backend` workflows run only by manual dispatch.
+They use these repository secrets in `htchtc052/lab-infra`:
 
 - `VPS_HOST` — `104.171.136.141`
 - `VPS_SSH_KEY` — the existing private key that can log in as `root`
