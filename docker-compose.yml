@@ -94,11 +94,7 @@ services:
       - cps_photos:/var/www/storage/app
 
   cps-client:
-    build:
-      context: ../frontend
-      dockerfile: .docker/prod/Dockerfile
-      args:
-        NUXT_PUBLIC_API_BASE: https://${API_DOMAIN}
+    image: ghcr.io/htchtc052/cps-client:latest
     restart: unless-stopped
     labels:
       - "traefik.enable=true"
